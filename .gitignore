@@ -1,0 +1,44 @@
+# Ignorar ambientes virtuais
+venv/
+
+# Arquivos de cache do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Configurações do sistema
+.DS_Store
+Thumbs.db
+
+
+# Arquivos de logs e temporários
+*.log
+*.tmp
+*.bak
+
+# Diretórios de saída
+/build/
+/dist/
+*.egg-info/
+
+# Modelos e arquivos grandes
+*.pt
+*.onnx
+*.h5
+
+# Dados de ROI e configurações salvas
+video_rois/
+*.mp4
+
+# Banco de dados e arquivos auxiliares
+cameras.db
+CameraManagerAPI.py
+Interface.py
+test2.py
+teste.py
+
+# Manter apenas IACAM.py
+!*IACAM.py
+!*best.pt
+!*requirements.txt
