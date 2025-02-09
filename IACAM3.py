@@ -182,7 +182,7 @@ class YOLOApp(QMainWindow):
 
         self.total_detections = {
             "carro": 0,
-            "caminhao": 0,
+            "truck": 0,
             "onibus": 0,
             "van": 0,
             "carreta": 0,
@@ -385,7 +385,7 @@ class YOLOApp(QMainWindow):
 
     def load_model(self):
         try:
-            self.model = YOLO('best.pt').to('cuda' if torch.cuda.is_available() else 'cpu')
+            self.model = YOLO('best1.pt').to('cuda' if torch.cuda.is_available() else 'cpu')
             self.add_log("Modelo YOLO carregado com sucesso")
         except Exception as e:
             self.add_log(f"Erro ao carregar modelo YOLO: {str(e)}")
@@ -506,117 +506,127 @@ class YOLOApp(QMainWindow):
 
         # Dicionário para armazenar detecções do frame atual
         frame_detections = {
-            "carro": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "caminhao": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "onibus": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "moto": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "van": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "reboque": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "bicicleta": {"count": 0, "eixos": 0, "eixos_erguidos": 0},
-            "carreta": {"count": 0, "eixos": 0, "eixos_erguidos": 0}
+            "carro": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "truck": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "onibus": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "moto": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "van": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "reboque": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "bicicleta": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+            "carreta": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0}
         }
 
-        # Desenhar ROI
         if len(self.video_label.roi_points) > 2:
             roi_points = np.array(self.video_label.roi_points, np.int32)
             cv2.polylines(frame_to_show, [roi_points], True, (255, 0, 0), 2)
 
             if self.yolo_active and self.frame_count % self.process_every_n_frames == 0:
-                # Criar máscara ROI
                 mask = np.zeros(frame.shape[:2], dtype=np.uint8)
                 cv2.fillPoly(mask, [roi_points], 255)
 
-                # Executar YOLO
                 results = self.model.predict(
                     frame,
                     conf=self.confidence_threshold,
                     iou=0.4
                 )[0]
 
-                # Primeiro, processar veículos
+                # Criar lista para armazenar todas as detecções
+                detections_list = []
+
+                # MODIFICAÇÃO 1: Processamento inicial das detecções
+                print("\nDetecções neste frame:")
                 for box in results.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    
-                    # Verificar ROI
+                    classe = results.names[int(box.cls)]
+                    conf = float(box.conf)
+                    print(f"Detectado: {classe} com confiança {conf:.2f}")
+
                     obj_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
                     cv2.rectangle(obj_mask, (x1, y1), (x2, y2), 255, -1)
                     intersecao = cv2.bitwise_and(mask, obj_mask)
 
                     if np.sum(intersecao) > 0:
-                        classe = results.names[int(box.cls)]
-                        conf = float(box.conf)
+                        center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                        det_info = {
+                            'classe': classe,
+                            'bbox': (x1, y1, x2, y2),
+                            'center': center,
+                            'conf': conf
+                        }
+                        detections_list.append(det_info)
 
-                        # Definir cor baseado no tipo
-                        if classe in ["carro", "van", "moto", "bicicleta"]:
-                            color = (0, 255, 0)  # Verde
-                        elif classe in ["caminhao", "carreta", "reboque", "onibus"]:
-                            color = (0, 0, 255)  # Vermelho
-                        else:
-                            color = (255, 165, 0)  # Laranja
-
-                        # Contabilizar veículos
                         if classe in frame_detections:
                             frame_detections[classe]["count"] += 1
 
-                        # Desenhar bbox e label
+                        color = (0, 255, 0) if classe in ["carro", "van", "moto", "bicicleta"] else \
+                            (0, 0, 255) if classe in ["truck", "carreta", "reboque", "onibus"] else \
+                            (255, 165, 0)
+
                         cv2.rectangle(frame_to_show, (x1, y1), (x2, y2), color, 2)
                         cv2.putText(frame_to_show, f"{classe} {conf:.2f}", 
                                 (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                # Depois, processar eixos e pneus
-                for box in results.boxes:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    classe = results.names[int(box.cls)]
-                    
-                    # Verificar ROI
-                    obj_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-                    cv2.rectangle(obj_mask, (x1, y1), (x2, y2), 255, -1)
-                    intersecao = cv2.bitwise_and(mask, obj_mask)
+                # MODIFICAÇÃO 2: Processamento de eixos
+                for det in detections_list:
+                    if det['classe'] in ['pneu', 'pneus']:
+                        min_dist = float('inf')
+                        nearest_vehicle = None
 
-                    if np.sum(intersecao) > 0:
-                        # Encontrar o veículo mais próximo
-                        if classe in ["pneu", "pneus"]:
-                            min_dist = float('inf')
-                            nearest_vehicle = None
-                            
-                            # Buscar veículo mais próximo
-                            for other_box in results.boxes:
-                                other_class = results.names[int(other_box.cls)]
-                                if other_class in frame_detections:
-                                    ox1, oy1, ox2, oy2 = map(int, other_box.xyxy[0])
-                                    # Calcular distância entre centros
-                                    dist = ((x1+x2)/2 - (ox1+ox2)/2)**2 + ((y1+y2)/2 - (oy1+oy2)/2)**2
-                                    if dist < min_dist:
-                                        min_dist = dist
-                                        nearest_vehicle = other_class
-                            
-                            if nearest_vehicle:
-                                if classe == "pneu":
-                                    frame_detections[nearest_vehicle]["eixos"] += 1
-                                else:  # pneus = eixo erguido
-                                    frame_detections[nearest_vehicle]["eixos_erguidos"] += 1
+                        for other_det in detections_list:
+                            if other_det['classe'] in frame_detections:
+                                dist = ((det['center'][0] - other_det['center'][0])**2 + 
+                                    (det['center'][1] - other_det['center'][1])**2)
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    nearest_vehicle = other_det['classe']
 
-                # Exibir informações na tela
+                        if nearest_vehicle:
+                            print(f"Associando {det['classe']} ao veículo {nearest_vehicle}")
+                            if det['classe'] == 'pneu':
+                                frame_detections[nearest_vehicle]["eixos"] += 1
+                                frame_detections[nearest_vehicle]["pneus"] += 2
+                            else:  # pneus = eixo suspenso
+                                frame_detections[nearest_vehicle]["eixos"] += 1  # Incrementa o total de eixos
+                                # frame_detections[nearest_vehicle]["eixos_erguidos"] += 1
+                                frame_detections[nearest_vehicle]["pneus"] += 2
+
+                # MODIFICAÇÃO 3: Atualização da interface
                 y_pos = 30
+                padding = 25
+                
+                # Exibição no vídeo
                 for veiculo, info in frame_detections.items():
                     if info["count"] > 0:
-                        texto = f"{veiculo.capitalize()}: {info['count']}"
-                        if info["eixos"] > 0 or info["eixos_erguidos"] > 0:
-                            texto += f" | Eixos: {info['eixos']} (Normais: {info['eixos'] - info['eixos_erguidos']}, Suspensos: {info['eixos_erguidos']})"
-                        cv2.putText(frame_to_show, texto, (10, y_pos), 
+                        texto_veiculo = f"{veiculo.capitalize()}: {info['count']}"
+                        cv2.putText(frame_to_show, texto_veiculo, (10, y_pos), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                        y_pos += 25
+                        y_pos += padding
 
-                # Atualizar texto de detecções
-                detections_text = "Contagem de Veículos e Eixos:\n\n"
+                        if info["eixos"] > 0 or info["eixos_erguidos"] > 0:
+                            eixos_normais = info["eixos"] - info["eixos_erguidos"]
+                            # texto_eixos = f"  Eixos: Total {info['eixos']} (Normais: {eixos_normais}, Suspensos: {info['eixos_erguidos']})"
+                            # cv2.putText(frame_to_show, texto_eixos, (30, y_pos), 
+                                    # cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                            y_pos += padding
+                            
+                            texto_pneus = f"  Pneus: {info['pneus']}"
+                            cv2.putText(frame_to_show, texto_pneus, (30, y_pos), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                            y_pos += padding
+                        y_pos += 5
+
+                # Atualização do texto na interface
+                detections_text = "Contagem por Tipo de Veículo:\n\n"
                 for veiculo, info in frame_detections.items():
                     if info["count"] > 0:
-                        detections_text += f"{veiculo.capitalize()}:\n"
-                        detections_text += f"  Quantidade: {info['count']}\n"
+                        detections_text += f"{veiculo.capitalize()}: {info['count']}\n"
                         if info["eixos"] > 0 or info["eixos_erguidos"] > 0:
-                            detections_text += f"  Eixos Normais: {info['eixos'] - info['eixos_erguidos']}\n"
-                            detections_text += f"  Eixos Suspensos: {info['eixos_erguidos']}\n"
+                            eixos_normais = info["eixos"] - info["eixos_erguidos"]
+                            detections_text += f"  Eixos: Total {info['eixos']} (Normais: {eixos_normais}, "
+                            # detections_text += f"Suspensos: {info['eixos_erguidos']})\n"
+                            detections_text += f"  Pneus: {info['pneus']}\n"
                         detections_text += "\n"
+
                 self.detections_text.setText(detections_text)
 
         # Converter e exibir frame
