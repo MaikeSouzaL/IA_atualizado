@@ -385,7 +385,7 @@ class YOLOApp(QMainWindow):
 
     def load_model(self):
         try:
-            self.model = YOLO('best-1.pt').to('cuda' if torch.cuda.is_available() else 'cpu')
+            self.model = YOLO('best.pt').to('cuda' if torch.cuda.is_available() else 'cpu')
             self.add_log("Modelo YOLO carregado com sucesso")
         except Exception as e:
             self.add_log(f"Erro ao carregar modelo YOLO: {str(e)}")
@@ -504,7 +504,20 @@ class YOLOApp(QMainWindow):
         frame_to_show = frame.copy()
         self.frame_count += 1
 
-        # Dicionário para armazenar detecções do frame atual
+        # Mantem as detecções do frame anterior se não existirem
+        if not hasattr(self, 'current_detections'):
+            self.current_detections = {
+                "carro": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "truck": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "onibus": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "moto": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "van": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "reboque": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "bicicleta": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
+                "carreta": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0}
+            }
+
+        # Dicionário para detecções do frame atual
         frame_detections = {
             "carro": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
             "truck": {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0},
@@ -530,16 +543,14 @@ class YOLOApp(QMainWindow):
                     iou=0.4
                 )[0]
 
-                # Criar lista para armazenar todas as detecções
                 detections_list = []
+                current_vehicles = set()  # Para rastrear veículos no frame atual
 
-                # MODIFICAÇÃO 1: Processamento inicial das detecções
-                print("\nDetecções neste frame:")
+                # Processamento inicial das detecções
                 for box in results.boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     classe = results.names[int(box.cls)]
                     conf = float(box.conf)
-                    print(f"Detectado: {classe} com confiança {conf:.2f}")
 
                     obj_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
                     cv2.rectangle(obj_mask, (x1, y1), (x2, y2), 255, -1)
@@ -557,6 +568,7 @@ class YOLOApp(QMainWindow):
 
                         if classe in frame_detections:
                             frame_detections[classe]["count"] += 1
+                            current_vehicles.add(classe)
 
                         color = (0, 255, 0) if classe in ["carro", "van", "moto", "bicicleta"] else \
                             (0, 0, 255) if classe in ["truck", "carreta", "reboque", "onibus"] else \
@@ -566,7 +578,7 @@ class YOLOApp(QMainWindow):
                         cv2.putText(frame_to_show, f"{classe} {conf:.2f}", 
                                 (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-                # MODIFICAÇÃO 2: Processamento de eixos
+                # Processamento de eixos
                 for det in detections_list:
                     if det['classe'] in ['pneu', 'pneus']:
                         min_dist = float('inf')
@@ -581,50 +593,91 @@ class YOLOApp(QMainWindow):
                                     nearest_vehicle = other_det['classe']
 
                         if nearest_vehicle:
-                            print(f"Associando {det['classe']} ao veículo {nearest_vehicle}")
                             if det['classe'] == 'pneu':
                                 frame_detections[nearest_vehicle]["eixos"] += 1
-                                frame_detections[nearest_vehicle]["pneus"] += 2
+                                # Ajuste específico para motos e bicicletas
+                                if nearest_vehicle in ['moto', 'bicicleta']:
+                                    frame_detections[nearest_vehicle]["pneus"] += 1
+                                else:
+                                    frame_detections[nearest_vehicle]["pneus"] += 2
                             else:  # pneus = eixo suspenso
-                                frame_detections[nearest_vehicle]["eixos"] += 1  # Incrementa o total de eixos
-                                # frame_detections[nearest_vehicle]["eixos_erguidos"] += 1
-                                frame_detections[nearest_vehicle]["pneus"] += 2
+                                frame_detections[nearest_vehicle]["eixos"] += 1
+                                frame_detections[nearest_vehicle]["eixos_erguidos"] += 1
+                                if nearest_vehicle in ['moto', 'bicicleta']:
+                                    frame_detections[nearest_vehicle]["pneus"] += 1
+                                else:
+                                    frame_detections[nearest_vehicle]["pneus"] += 2
 
-                # MODIFICAÇÃO 3: Atualização da interface
+                # Verifica veículos que saíram do ROI
+                if not hasattr(self, 'previous_vehicles'):
+                    self.previous_vehicles = set()
+                
+                vehicles_left = self.previous_vehicles - current_vehicles
+                for veiculo in vehicles_left:
+                    if self.current_detections[veiculo]["count"] > 0:
+                        # Prepara os dados para salvar
+                        detection_info = {
+                            "tipo": veiculo,
+                            "count": self.current_detections[veiculo]["count"],
+                            "eixos": self.current_detections[veiculo]["eixos"],
+                            "eixos_erguidos": self.current_detections[veiculo]["eixos_erguidos"],
+                            "pneus": self.current_detections[veiculo]["pneus"]
+                        }
+                        # Salva no JSON antes de limpar
+                        self.save_detection_to_json(detection_info)
+                        # Só depois limpa as detecções
+                        self.current_detections[veiculo] = {"count": 0, "eixos": 0, "eixos_erguidos": 0, "pneus": 0}
+                        self.add_log(f"Veículo {veiculo} saiu do ROI - dados salvos")
+
+                # Atualiza o registro de veículos para o próximo frame
+                self.previous_vehicles = current_vehicles
+
+                # Atualiza as detecções atuais para os veículos ainda presentes
+                for veiculo in frame_detections:
+                    if veiculo in current_vehicles:
+                        self.current_detections[veiculo]["eixos"] = max(
+                            self.current_detections[veiculo]["eixos"],
+                            frame_detections[veiculo]["eixos"]
+                        )
+                        self.current_detections[veiculo]["eixos_erguidos"] = max(
+                            self.current_detections[veiculo]["eixos_erguidos"],
+                            frame_detections[veiculo]["eixos_erguidos"]
+                        )
+                        self.current_detections[veiculo]["pneus"] = max(
+                            self.current_detections[veiculo]["pneus"],
+                            frame_detections[veiculo]["pneus"]
+                        )
+                        self.current_detections[veiculo]["count"] = frame_detections[veiculo]["count"]
+
+                # Atualização da interface
                 y_pos = 30
                 padding = 25
-                
-                # Exibição no vídeo
-                for veiculo, info in frame_detections.items():
+                detections_text = "Contagem por Tipo de Veículo:\n\n"
+
+                for veiculo, info in self.current_detections.items():
                     if info["count"] > 0:
                         texto_veiculo = f"{veiculo.capitalize()}: {info['count']}"
                         cv2.putText(frame_to_show, texto_veiculo, (10, y_pos), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                        detections_text += f"{veiculo.capitalize()}: {info['count']}\n"
                         y_pos += padding
 
-                        if info["eixos"] > 0 or info["eixos_erguidos"] > 0:
+                        if info["eixos"] > 0:
                             eixos_normais = info["eixos"] - info["eixos_erguidos"]
-                            # texto_eixos = f"  Eixos: Total {info['eixos']} (Normais: {eixos_normais}, Suspensos: {info['eixos_erguidos']})"
-                            # cv2.putText(frame_to_show, texto_eixos, (30, y_pos), 
-                                    # cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                            texto_eixos = f"  Eixos: Total {info['eixos']}"
+                            cv2.putText(frame_to_show, texto_eixos, (30, y_pos), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                            detections_text += f"  Eixos: Total {info['eixos']}\n"
+                            detections_text += f"  Normais: {eixos_normais}\n"
+                            detections_text += f"  Suspensos: {info['eixos_erguidos']}\n"
                             y_pos += padding
-                            
+
                             texto_pneus = f"  Pneus: {info['pneus']}"
                             cv2.putText(frame_to_show, texto_pneus, (30, y_pos), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                            detections_text += f"  Pneus: {info['pneus']}\n"
                             y_pos += padding
                         y_pos += 5
-
-                # Atualização do texto na interface
-                detections_text = "Contagem por Tipo de Veículo:\n\n"
-                for veiculo, info in frame_detections.items():
-                    if info["count"] > 0:
-                        detections_text += f"{veiculo.capitalize()}: {info['count']}\n"
-                        if info["eixos"] > 0 or info["eixos_erguidos"] > 0:
-                            eixos_normais = info["eixos"] - info["eixos_erguidos"]
-                            detections_text += f"  Eixos: Total {info['eixos']} (Normais: {eixos_normais}, "
-                            # detections_text += f"Suspensos: {info['eixos_erguidos']})\n"
-                            detections_text += f"  Pneus: {info['pneus']}\n"
                         detections_text += "\n"
 
                 self.detections_text.setText(detections_text)
@@ -640,6 +693,49 @@ class YOLOApp(QMainWindow):
             Qt.TransformationMode.SmoothTransformation
         )
         self.video_label.setPixmap(scaled_pixmap)
+
+    def save_detection_to_json(self, veiculo_info):
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Criar diretório para detecções se não existir
+        detection_dir = "detections"
+        if not os.path.exists(detection_dir):
+            os.makedirs(detection_dir)
+        
+        # Nome do arquivo baseado na data
+        date_str = datetime.now().strftime("%Y%m%d")
+        json_file = os.path.join(detection_dir, f"detections_{date_str}.json")
+        
+        # Preparar dados da detecção
+        detection_data = {
+            "timestamp": timestamp,
+            "veiculo": veiculo_info["tipo"],
+            "contagem": veiculo_info["count"],
+            "eixos_total": veiculo_info["eixos"],
+            "eixos_normais": veiculo_info["eixos"] - veiculo_info["eixos_erguidos"],
+            "eixos_suspensos": veiculo_info["eixos_erguidos"],
+            "pneus": veiculo_info["pneus"]
+        }
+        
+        # Carregar dados existentes ou criar novo arquivo
+        try:
+            if os.path.exists(json_file):
+                with open(json_file, 'r') as f:
+                    data = json.load(f)
+            else:
+                data = {"detections": []}
+                
+            # Adicionar nova detecção
+            data["detections"].append(detection_data)
+            
+            # Salvar arquivo atualizado
+            with open(json_file, 'w') as f:
+                json.dump(data, f, indent=4)
+                
+            self.add_log(f"Detecção salva para {veiculo_info['tipo']}")
+            
+        except Exception as e:
+            self.add_log(f"Erro ao salvar detecção: {str(e)}")
 
     def update_confidence(self, value):
         self.confidence_threshold = value
