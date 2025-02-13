@@ -1,0 +1,13 @@
+{
+    "detections": [
+        {
+            "timestamp": "2025-02-12 23:44:41",
+            "veiculo": "carro",
+            "contagem": 1,
+            "eixos_total": 2,
+            "eixos_normais": 2,
+            "eixos_suspensos": 0,
+            "pneus": 4
+        }
+    ]
+}
